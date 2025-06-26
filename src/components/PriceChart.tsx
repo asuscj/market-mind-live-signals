@@ -20,6 +20,27 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, currentPrice, symbol = 'B
   const priceChange = data.length > 1 ? 
     ((currentPrice - data[data.length - 2]?.price) / data[data.length - 2]?.price) * 100 : 0;
 
+  // Show loading state if no data
+  if (!data || data.length === 0) {
+    return (
+      <div className="trading-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold">{symbol} - Cargando datos...</h2>
+          <div className="text-2xl font-bold trading-gold">
+            Conectando...
+          </div>
+        </div>
+        
+        <div className="h-96 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-500 mx-auto mb-4"></div>
+            <p className="text-gray-400">Obteniendo datos de Binance...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="trading-card p-6">
       <div className="flex items-center justify-between mb-4">
@@ -87,7 +108,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, currentPrice, symbol = 'B
       </div>
       
       <div className="mt-4 text-xs text-gray-400">
-        * Datos actualizados cada 10 segundos desde Binance API
+        * Datos actualizados cada 10 segundos desde Binance API | Última actualización: {new Date().toLocaleTimeString()}
       </div>
     </div>
   );
