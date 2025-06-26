@@ -7,10 +7,13 @@ import TechnicalIndicators from '@/components/TechnicalIndicators';
 import Portfolio from '@/components/Portfolio';
 import CryptoSelector from '@/components/CryptoSelector';
 import ModelMetrics from '@/components/ModelMetrics';
+import Backtesting from '@/components/Backtesting';
 import { useBinanceData } from '@/hooks/useBinanceData';
+import { useMLPredictions } from '@/hooks/useMLPredictions';
 
 const Index = () => {
   const [selectedCrypto, setSelectedCrypto] = useState('BTCUSDT');
+  const [activeTab, setActiveTab] = useState<'live' | 'backtest'>('live');
   
   const {
     priceData,
@@ -20,6 +23,8 @@ const Index = () => {
     indicators,
     mlTrading
   } = useBinanceData(selectedCrypto);
+
+  const mlPredictions = useMLPredictions(selectedCrypto);
 
   // Datos estáticos para el portfolio
   const mockPositions = [
@@ -49,43 +54,108 @@ const Index = () => {
         selectedCrypto={selectedCrypto}
         onCryptoChange={setSelectedCrypto}
       />
-      
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <PriceChart 
-            data={priceData} 
-            currentPrice={currentPrice}
-            symbol={selectedCrypto.replace('USDT', '/USDT')}
-          />
-        </div>
-        
-        <div>
-          <SignalPanel signals={signals} currentSignal={currentSignal} />
-        </div>
+
+      {/* Navegación entre pestañas */}
+      <div className="flex space-x-4 border-b border-gray-700">
+        <button
+          onClick={() => setActiveTab('live')}
+          className={`py-2 px-4 font-semibold ${
+            activeTab === 'live' 
+              ? 'text-yellow-400 border-b-2 border-yellow-400' 
+              : 'text-gray-400 hover:text-white'
+          }`}
+        >
+          Trading en Vivo
+        </button>
+        <button
+          onClick={() => setActiveTab('backtest')}
+          className={`py-2 px-4 font-semibold ${
+            activeTab === 'backtest' 
+              ? 'text-yellow-400 border-b-2 border-yellow-400' 
+              : 'text-gray-400 hover:text-white'
+          }`}
+        >
+          Backtesting Histórico
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div>
-          <TechnicalIndicators {...indicators} />
-        </div>
-        
-        <div>
-          <Portfolio 
-            balance={50000}
-            totalValue={53247}
-            dayPnL={1247}
-            positions={mockPositions}
-          />
-        </div>
+      {activeTab === 'live' ? (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              <PriceChart 
+                data={priceData} 
+                currentPrice={currentPrice}
+                symbol={selectedCrypto.replace('USDT', '/USDT')}
+              />
+            </div>
+            
+            <div>
+              <SignalPanel signals={signals} currentSignal={currentSignal} />
+            </div>
+          </div>
 
-        {/* Nuevas Métricas ML */}
-        <div>
-          <ModelMetrics 
-            metrics={mlTrading.modelMetrics}
-            modelStatus={mlTrading.modelStatus}
-          />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div>
+              <TechnicalIndicators {...indicators} />
+            </div>
+            
+            <div>
+              <Portfolio 
+                balance={50000}
+                totalValue={53247}
+                dayPnL={1247}
+                positions={mockPositions}
+              />
+            </div>
+
+            <div>
+              <ModelMetrics 
+                metrics={mlTrading.modelMetrics}
+                modelStatus={mlTrading.modelStatus}
+              />
+            </div>
+          </div>
+
+          {/* Predicción ML Actual */}
+          {mlPredictions.currentPrediction && (
+            <div className="trading-card p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className={`w-3 h-3 rounded-full ${
+                    mlPredictions.currentPrediction.action === 'BUY' ? 'bg-green-400' : 
+                    mlPredictions.currentPrediction.action === 'SELL' ? 'bg-red-400' : 'bg-blue-400'
+                  }`}></div>
+                  <span className="font-semibold">
+                    Predicción ML: {mlPredictions.currentPrediction.action}
+                  </span>
+                  <span className="text-sm text-gray-400">
+                    ({mlPredictions.currentPrediction.confidence.toFixed(1)}% confianza)
+                  </span>
+                </div>
+                <div className="text-sm text-gray-400">
+                  Precisión Reciente: {mlPredictions.getRecentAccuracy().toFixed(1)}%
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+          <div className="xl:col-span-3">
+            <Backtesting 
+              symbol={selectedCrypto}
+              mlPrediction={mlPredictions.currentPrediction}
+            />
+          </div>
+          <div>
+            <ModelMetrics 
+              metrics={mlTrading.modelMetrics}
+              modelStatus={mlTrading.modelStatus}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Indicador de carga de datos ML */}
       {mlTrading.isLoadingData && (

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useMLTrading } from './useMLTrading';
+import { useMLPredictions } from './useMLPredictions';
 
 interface PriceData {
   time: string;
@@ -75,6 +76,7 @@ export const useBinanceData = (symbol: string) => {
   });
 
   const mlTrading = useMLTrading(symbol);
+  const mlPredictions = useMLPredictions(symbol);
 
   const calculateSMA = (prices: number[], period: number): number => {
     if (prices.length < period) return prices[prices.length - 1] || 0;
@@ -173,63 +175,96 @@ export const useBinanceData = (symbol: string) => {
         
         setIndicators(currentIndicators);
 
-        // Generar predicción ML
-        await mlTrading.makePrediction({
+        // Generar predicción ML mejorada
+        const marketData = {
           price: latestData.price,
           rsi,
           sma20: latestData.sma20,
           sma50: latestData.sma50,
           volume: latestData.volume,
           macd: currentIndicators.macd
-        });
+        };
 
-        // Generar señal tradicional
-        generateTradingSignal(latestData, rsi, processedData);
+        // Obtener predicción ML
+        const mlPrediction = await mlPredictions.makePrediction(marketData);
+        
+        // También actualizar el sistema ML anterior para compatibilidad
+        await mlTrading.makePrediction(marketData);
+
+        // Generar señal combinada (técnica + ML)
+        generateEnhancedTradingSignal(latestData, rsi, processedData, mlPrediction);
       }
       
     } catch (error) {
       console.error('❌ Error fetching Binance data:', error);
     }
-  }, [symbol, mlTrading]);
+  }, [symbol, mlTrading, mlPredictions]);
 
-  const generateTradingSignal = (
+  const generateEnhancedTradingSignal = (
     latestData: PriceData, 
     rsi: number, 
-    historicalData: PriceData[]
+    historicalData: PriceData[],
+    mlPrediction: any
   ) => {
     let signalType: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let confidence = 50;
     let reason = 'Análisis en curso...';
 
-    // Combinar señal tradicional con ML si está disponible
-    if (mlTrading.mlPrediction) {
-      const mlAction = mlTrading.mlPrediction.action;
-      const mlConfidence = mlTrading.mlPrediction.confidence;
+    // Análisis técnico tradicional
+    let technicalSignal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
+    let technicalConfidence = 50;
+
+    if (rsi < 30 && latestData.price > latestData.sma20) {
+      technicalSignal = 'BUY';
+      technicalConfidence = Math.min(90, 60 + (30 - rsi));
+    } else if (rsi > 70 && latestData.price < latestData.sma20) {
+      technicalSignal = 'SELL';
+      technicalConfidence = Math.min(90, 60 + (rsi - 70));
+    }
+
+    // Combinar con predicción ML si está disponible
+    if (mlPrediction && mlPredictions.isModelReady) {
+      const mlAction = mlPrediction.action;
+      const mlConfidence = mlPrediction.confidence;
+      const signalStrength = mlPredictions.getSignalStrength(mlPrediction);
       
-      // Ponderar señal ML con análisis técnico tradicional
-      if (mlAction === 'BUY' && rsi < 50 && latestData.price > latestData.sma20) {
-        signalType = 'BUY';
-        confidence = Math.min(95, mlConfidence * 0.7 + 25);
-        reason = `ML recomienda COMPRA (${mlConfidence.toFixed(1)}% confianza) + RSI favorable y precio sobre SMA20.`;
-      } else if (mlAction === 'SELL' && rsi > 50 && latestData.price < latestData.sma20) {
-        signalType = 'SELL';
-        confidence = Math.min(95, mlConfidence * 0.7 + 25);
-        reason = `ML recomienda VENTA (${mlConfidence.toFixed(1)}% confianza) + RSI desfavorable y precio bajo SMA20.`;
-      } else {
+      // Estrategia híbrida: combinar señales técnicas y ML
+      if (technicalSignal === mlAction && technicalSignal !== 'HOLD') {
+        // Ambas señales coinciden - alta confianza
+        signalType = technicalSignal;
+        confidence = Math.min(95, (technicalConfidence * 0.4) + (mlConfidence * 0.6));
+        reason = `🤖 ML y análisis técnico coinciden: ${signalType}. ML: ${mlConfidence.toFixed(1)}%, Técnico: ${technicalConfidence}%, Fuerza: ${signalStrength}`;
+      } else if (signalStrength === 'STRONG' && mlConfidence > 80) {
+        // ML muy confiable, seguir su recomendación
         signalType = mlAction;
-        confidence = Math.max(60, mlConfidence * 0.8);
-        reason = `Predicción ML: ${mlAction} con ${mlConfidence.toFixed(1)}% de confianza.`;
+        confidence = Math.min(90, mlConfidence * 0.9);
+        reason = `🎯 Predicción ML fuerte: ${mlAction} (${mlConfidence.toFixed(1)}% confianza, ${signalStrength})`;
+      } else if (technicalSignal !== 'HOLD' && (mlAction === 'HOLD' || mlConfidence < 60)) {
+        // ML incierto, usar análisis técnico
+        signalType = technicalSignal;
+        confidence = Math.max(55, technicalConfidence * 0.8);
+        reason = `📊 Análisis técnico (ML incierto): ${technicalSignal}. RSI: ${rsi.toFixed(1)}, Precio vs SMA20: ${((latestData.price / latestData.sma20 - 1) * 100).toFixed(2)}%`;
+      } else if (mlAction !== 'HOLD' && technicalSignal === 'HOLD') {
+        // Solo ML tiene señal
+        signalType = mlAction;
+        confidence = Math.max(55, mlConfidence * 0.7);
+        reason = `🤖 Solo predicción ML: ${mlAction} (${mlConfidence.toFixed(1)}% confianza, técnico neutral)`;
+      } else {
+        // Señales conflictivas o ambas neutras
+        signalType = 'HOLD';
+        confidence = 50;
+        reason = `⚖️ Señales mixtas: ML dice ${mlAction} (${mlConfidence.toFixed(1)}%), Técnico dice ${technicalSignal}. Mantener posición.`;
       }
     } else {
-      // Lógica tradicional cuando ML no está disponible
-      if (rsi < 30 && latestData.price > latestData.sma20) {
-        signalType = 'BUY';
-        confidence = Math.min(90, 60 + (30 - rsi));
+      // Solo análisis técnico (ML no disponible)
+      signalType = technicalSignal;
+      confidence = technicalConfidence;
+      if (technicalSignal === 'BUY') {
         reason = 'RSI en sobreventa + precio por encima de SMA20. Posible rebote alcista.';
-      } else if (rsi > 70 && latestData.price < latestData.sma20) {
-        signalType = 'SELL';
-        confidence = Math.min(90, 60 + (rsi - 70));
+      } else if (technicalSignal === 'SELL') {
         reason = 'RSI en sobrecompra + precio por debajo de SMA20. Posible corrección bajista.';
+      } else {
+        reason = 'Condiciones de mercado neutras. Esperando señal clara.';
       }
     }
 
@@ -243,7 +278,7 @@ export const useBinanceData = (symbol: string) => {
       reason
     };
 
-    console.log(`🎯 Generated signal: ${signalType} for ${symbol} at $${latestData.price} (${confidence}% confidence)`);
+    console.log(`🎯 Enhanced signal generated: ${signalType} for ${symbol} at $${latestData.price} (${confidence}% confidence)`);
 
     setCurrentSignal(newSignal);
     
@@ -278,7 +313,8 @@ export const useBinanceData = (symbol: string) => {
     signals,
     currentSignal,
     indicators,
-    // Exponer datos ML
-    mlTrading
+    // Exponer datos ML mejorados
+    mlTrading,
+    mlPredictions
   };
 };
