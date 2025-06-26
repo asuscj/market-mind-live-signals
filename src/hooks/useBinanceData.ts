@@ -1,5 +1,5 @@
-
 import { useState, useEffect, useCallback } from 'react';
+import { useMLTrading } from './useMLTrading';
 
 interface PriceData {
   time: string;
@@ -74,6 +74,8 @@ export const useBinanceData = (symbol: string) => {
     avgVolume: 0
   });
 
+  const mlTrading = useMLTrading(symbol);
+
   const calculateSMA = (prices: number[], period: number): number => {
     if (prices.length < period) return prices[prices.length - 1] || 0;
     const sum = prices.slice(-period).reduce((a, b) => a + b, 0);
@@ -116,8 +118,6 @@ export const useBinanceData = (symbol: string) => {
       
       const data: BinanceKline[] = await response.json();
       console.log(`✅ Received ${data.length} data points from Binance`);
-      console.log('📊 First data point:', data[0]);
-      console.log('📊 Last data point:', data[data.length - 1]);
       
       if (!data || data.length === 0) {
         console.error('❌ No data received from Binance API');
@@ -125,11 +125,10 @@ export const useBinanceData = (symbol: string) => {
       }
       
       const processedData: PriceData[] = data.map((kline, index) => {
-        const price = parseFloat(kline[4]); // close price
+        const price = parseFloat(kline[4]);
         const volume = parseFloat(kline[5]);
-        const time = new Date(kline[6]).toLocaleTimeString(); // closeTime
+        const time = new Date(kline[6]).toLocaleTimeString();
         
-        // Calculate SMAs using previous prices
         const prices = data.slice(0, index + 1).map(k => parseFloat(k[4]));
         const sma20 = calculateSMA(prices, 20);
         const sma50 = calculateSMA(prices, 50);
@@ -144,24 +143,18 @@ export const useBinanceData = (symbol: string) => {
       });
 
       console.log(`📈 Processed ${processedData.length} data points`);
-      console.log('💰 Current price:', processedData[processedData.length - 1]?.price);
-
       setPriceData(processedData);
       
       if (processedData.length > 0) {
         const latestData = processedData[processedData.length - 1];
         setCurrentPrice(latestData.price);
         
-        // Calculate technical indicators
         const prices = processedData.map(d => d.price);
         const volumes = processedData.map(d => d.volume);
         const rsi = calculateRSI(prices);
         const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
         
-        console.log(`📊 RSI: ${rsi.toFixed(2)}, Volume: ${latestData.volume.toFixed(2)}`);
-        
-        setIndicators(prev => ({
-          ...prev,
+        const currentIndicators = {
           rsi,
           volume: latestData.volume,
           avgVolume,
@@ -170,22 +163,34 @@ export const useBinanceData = (symbol: string) => {
             middle: latestData.sma20,
             lower: latestData.sma20 * 0.98,
             current: latestData.price
+          },
+          macd: {
+            macd: 0,
+            signal: 0,
+            histogram: 0
           }
-        }));
+        };
+        
+        setIndicators(currentIndicators);
 
-        // Generate trading signal
+        // Generar predicción ML
+        await mlTrading.makePrediction({
+          price: latestData.price,
+          rsi,
+          sma20: latestData.sma20,
+          sma50: latestData.sma50,
+          volume: latestData.volume,
+          macd: currentIndicators.macd
+        });
+
+        // Generar señal tradicional
         generateTradingSignal(latestData, rsi, processedData);
       }
       
     } catch (error) {
       console.error('❌ Error fetching Binance data:', error);
-      console.error('🔍 Error details:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        symbol,
-        timestamp: new Date().toISOString()
-      });
     }
-  }, [symbol]);
+  }, [symbol, mlTrading]);
 
   const generateTradingSignal = (
     latestData: PriceData, 
@@ -196,23 +201,36 @@ export const useBinanceData = (symbol: string) => {
     let confidence = 50;
     let reason = 'Análisis en curso...';
 
-    // Signal logic based on RSI and SMAs
-    if (rsi < 30 && latestData.price > latestData.sma20) {
-      signalType = 'BUY';
-      confidence = Math.min(90, 60 + (30 - rsi));
-      reason = 'RSI en sobreventa + precio por encima de SMA20. Posible rebote alcista.';
-    } else if (rsi > 70 && latestData.price < latestData.sma20) {
-      signalType = 'SELL';
-      confidence = Math.min(90, 60 + (rsi - 70));
-      reason = 'RSI en sobrecompra + precio por debajo de SMA20. Posible corrección bajista.';
-    } else if (latestData.sma20 > latestData.sma50 && latestData.price > latestData.sma20) {
-      signalType = 'BUY';
-      confidence = 70;
-      reason = 'Tendencia alcista confirmada. SMA20 > SMA50 y precio sobre ambas medias.';
-    } else if (latestData.sma20 < latestData.sma50 && latestData.price < latestData.sma20) {
-      signalType = 'SELL';
-      confidence = 70;
-      reason = 'Tendencia bajista confirmada. SMA20 < SMA50 y precio bajo ambas medias.';
+    // Combinar señal tradicional con ML si está disponible
+    if (mlTrading.mlPrediction) {
+      const mlAction = mlTrading.mlPrediction.action;
+      const mlConfidence = mlTrading.mlPrediction.confidence;
+      
+      // Ponderar señal ML con análisis técnico tradicional
+      if (mlAction === 'BUY' && rsi < 50 && latestData.price > latestData.sma20) {
+        signalType = 'BUY';
+        confidence = Math.min(95, mlConfidence * 0.7 + 25);
+        reason = `ML recomienda COMPRA (${mlConfidence.toFixed(1)}% confianza) + RSI favorable y precio sobre SMA20.`;
+      } else if (mlAction === 'SELL' && rsi > 50 && latestData.price < latestData.sma20) {
+        signalType = 'SELL';
+        confidence = Math.min(95, mlConfidence * 0.7 + 25);
+        reason = `ML recomienda VENTA (${mlConfidence.toFixed(1)}% confianza) + RSI desfavorable y precio bajo SMA20.`;
+      } else {
+        signalType = mlAction;
+        confidence = Math.max(60, mlConfidence * 0.8);
+        reason = `Predicción ML: ${mlAction} con ${mlConfidence.toFixed(1)}% de confianza.`;
+      }
+    } else {
+      // Lógica tradicional cuando ML no está disponible
+      if (rsi < 30 && latestData.price > latestData.sma20) {
+        signalType = 'BUY';
+        confidence = Math.min(90, 60 + (30 - rsi));
+        reason = 'RSI en sobreventa + precio por encima de SMA20. Posible rebote alcista.';
+      } else if (rsi > 70 && latestData.price < latestData.sma20) {
+        signalType = 'SELL';
+        confidence = Math.min(90, 60 + (rsi - 70));
+        reason = 'RSI en sobrecompra + precio por debajo de SMA20. Posible corrección bajista.';
+      }
     }
 
     const newSignal: Signal = {
@@ -229,7 +247,6 @@ export const useBinanceData = (symbol: string) => {
 
     setCurrentSignal(newSignal);
     
-    // Add to history if not HOLD
     if (signalType !== 'HOLD') {
       setSignals(prev => [newSignal, ...prev.slice(0, 9)]);
     }
@@ -260,6 +277,8 @@ export const useBinanceData = (symbol: string) => {
     currentPrice,
     signals,
     currentSignal,
-    indicators
+    indicators,
+    // Exponer datos ML
+    mlTrading
   };
 };

@@ -6,6 +6,7 @@ import SignalPanel from '@/components/SignalPanel';
 import TechnicalIndicators from '@/components/TechnicalIndicators';
 import Portfolio from '@/components/Portfolio';
 import CryptoSelector from '@/components/CryptoSelector';
+import ModelMetrics from '@/components/ModelMetrics';
 import { useBinanceData } from '@/hooks/useBinanceData';
 
 const Index = () => {
@@ -16,7 +17,8 @@ const Index = () => {
     currentPrice,
     signals,
     currentSignal,
-    indicators
+    indicators,
+    mlTrading
   } = useBinanceData(selectedCrypto);
 
   // Datos estáticos para el portfolio
@@ -43,14 +45,12 @@ const Index = () => {
     <div className="min-h-screen p-6 space-y-6">
       <TradingHeader />
       
-      {/* Selector de Criptomoneda */}
       <CryptoSelector 
         selectedCrypto={selectedCrypto}
         onCryptoChange={setSelectedCrypto}
       />
       
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Columna Principal - Gráfico */}
         <div className="lg:col-span-2">
           <PriceChart 
             data={priceData} 
@@ -59,19 +59,16 @@ const Index = () => {
           />
         </div>
         
-        {/* Columna Derecha - Señales */}
         <div>
           <SignalPanel signals={signals} currentSignal={currentSignal} />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Indicadores Técnicos */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div>
           <TechnicalIndicators {...indicators} />
         </div>
         
-        {/* Portfolio */}
         <div>
           <Portfolio 
             balance={50000}
@@ -80,7 +77,25 @@ const Index = () => {
             positions={mockPositions}
           />
         </div>
+
+        {/* Nuevas Métricas ML */}
+        <div>
+          <ModelMetrics 
+            metrics={mlTrading.modelMetrics}
+            modelStatus={mlTrading.modelStatus}
+          />
+        </div>
       </div>
+
+      {/* Indicador de carga de datos ML */}
+      {mlTrading.isLoadingData && (
+        <div className="fixed bottom-4 right-4 trading-card p-4">
+          <div className="flex items-center space-x-2">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-500"></div>
+            <span className="text-sm">Entrenando modelo ML...</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
